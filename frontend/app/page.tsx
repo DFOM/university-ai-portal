@@ -1,16 +1,38 @@
+cat > app/page.tsx <<'EOF'
 "use client";
 
 import { useEffect, useState } from "react";
 
+type KnowledgeStatus = {
+  files: Record<string, number>;
+  total_chunks: number;
+};
+
 export default function Home() {
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+
   const [backendMessage, setBackendMessage] = useState("Checking backend...");
   const [backendStatus, setBackendStatus] = useState("loading");
+
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [uploadMessage, setUploadMessage] = useState("");
+  const [knowledge, setKnowledge] = useState<KnowledgeStatus | null>(null);
+
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
   const [sources, setSources] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+  async function refreshKnowledge() {
+    try {
+      const response = await fetch(`${apiUrl}/knowledge`);
+      const data = await response.json();
+      setKnowledge(data);
+    } catch {
+      setKnowledge(null);
+    }
+  }
 
   useEffect(() => {
     fetch(`${apiUrl}/`)
@@ -23,7 +45,45 @@ export default function Home() {
         setBackendMessage("Backend connection failed");
         setBackendStatus("offline");
       });
+
+    refreshKnowledge();
   }, [apiUrl]);
+
+  async function uploadFile() {
+    if (!selectedFile) {
+      setUploadMessage("Choose a file first.");
+      return;
+    }
+
+    setUploading(true);
+    setUploadMessage("");
+
+    const formData = new FormData();
+    formData.append("file", selectedFile);
+
+    try {
+      const response = await fetch(`${apiUrl}/upload`, {
+        method: "POST",
+        body: formData
+      });
+
+      const data = await response.json();
+
+      if (data.status === "success") {
+        setUploadMessage(
+          `Uploaded ${data.filename}. Added ${data.chunks_added} knowledge chunks.`
+        );
+        setSelectedFile(null);
+        await refreshKnowledge();
+      } else {
+        setUploadMessage(data.message || "Upload failed.");
+      }
+    } catch {
+      setUploadMessage("Upload failed. Backend may be offline.");
+    } finally {
+      setUploading(false);
+    }
+  }
 
   async function askQuestion() {
     if (!question.trim()) return;
@@ -39,7 +99,7 @@ export default function Home() {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          question: question
+          question
         })
       });
 
@@ -54,41 +114,113 @@ export default function Home() {
     }
   }
 
+  async function clearKnowledge() {
+    try {
+      await fetch(`${apiUrl}/knowledge`, {
+        method: "DELETE"
+      });
+      setUploadMessage("Temporary knowledge store cleared.");
+      setAnswer("");
+      setSources([]);
+      await refreshKnowledge();
+    } catch {
+      setUploadMessage("Failed to clear knowledge store.");
+    }
+  }
+
   return (
-    <main className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-6">
-      <div className="max-w-4xl w-full rounded-2xl bg-slate-900 border border-slate-700 p-8 shadow-xl">
-        <p className="text-sm text-blue-400 mb-2">University AI Portal</p>
+    <main className="min-h-screen bg-slate-950 text-white p-6">
+      <div className="mx-auto max-w-5xl">
+        <div className="mb-8 rounded-2xl bg-slate-900 border border-slate-700 p-8 shadow-xl">
+          <p className="text-sm text-blue-400 mb-2">University AI Portal</p>
 
-        <h1 className="text-4xl font-bold mb-4">
-          AI-Powered University Portal Demo
-        </h1>
+          <h1 className="text-4xl font-bold mb-4">
+            Temporary Knowledge Graph Demo
+          </h1>
 
-        <p className="text-slate-300 mb-6">
-          Ask a question. Right now this is a demo response. Later it will connect
-          to the Obsidian knowledge graph, local LLM, and IBM Quantum tools.
-        </p>
-
-        <div className="rounded-xl bg-slate-800 border border-slate-700 p-5 mb-6">
-          <h2 className="text-xl font-semibold mb-2">Backend Connection</h2>
-          <p
-            className={
-              backendStatus === "online"
-                ? "text-green-400"
-                : backendStatus === "offline"
-                ? "text-red-400"
-                : "text-yellow-400"
-            }
-          >
-            {backendMessage}
+          <p className="text-slate-300">
+            Upload university documents such as handbooks, syllabi, and graduation
+            requirements. The portal will search the temporary knowledge store and
+            answer from uploaded files.
           </p>
         </div>
 
-        <div className="rounded-xl bg-slate-800 border border-slate-700 p-5">
-          <h2 className="text-xl font-semibold mb-4">Ask the Portal</h2>
+        <div className="grid gap-6 lg:grid-cols-2">
+          <section className="rounded-2xl bg-slate-900 border border-slate-700 p-6">
+            <h2 className="text-xl font-semibold mb-3">1. System Status</h2>
+
+            <p
+              className={
+                backendStatus === "online"
+                  ? "text-green-400"
+                  : backendStatus === "offline"
+                  ? "text-red-400"
+                  : "text-yellow-400"
+              }
+            >
+              {backendMessage}
+            </p>
+
+            <div className="mt-4 rounded-xl bg-slate-800 border border-slate-700 p-4">
+              <h3 className="font-semibold mb-2">Temporary Knowledge Store</h3>
+
+              <p className="text-slate-300">
+                Total chunks: {knowledge?.total_chunks ?? 0}
+              </p>
+
+              {knowledge && Object.keys(knowledge.files).length > 0 ? (
+                <ul className="mt-3 list-disc list-inside text-slate-400 text-sm">
+                  {Object.entries(knowledge.files).map(([filename, chunks]) => (
+                    <li key={filename}>
+                      {filename} — {chunks} chunks
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-2 text-slate-500 text-sm">
+                  No files uploaded yet.
+                </p>
+              )}
+
+              <button
+                onClick={clearKnowledge}
+                className="mt-4 rounded-lg bg-slate-700 px-4 py-2 text-sm hover:bg-slate-600"
+              >
+                Clear temporary knowledge
+              </button>
+            </div>
+          </section>
+
+          <section className="rounded-2xl bg-slate-900 border border-slate-700 p-6">
+            <h2 className="text-xl font-semibold mb-3">2. Upload Knowledge File</h2>
+
+            <input
+              type="file"
+              accept=".pdf,.txt,.md"
+              onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+              className="block w-full text-sm text-slate-300 file:mr-4 file:rounded-lg file:border-0 file:bg-blue-600 file:px-4 file:py-2 file:text-white hover:file:bg-blue-500"
+            />
+
+            <button
+              onClick={uploadFile}
+              disabled={uploading}
+              className="mt-4 rounded-lg bg-blue-600 px-5 py-3 font-semibold hover:bg-blue-500 disabled:opacity-50"
+            >
+              {uploading ? "Uploading..." : "Upload File"}
+            </button>
+
+            {uploadMessage && (
+              <p className="mt-4 text-sm text-slate-300">{uploadMessage}</p>
+            )}
+          </section>
+        </div>
+
+        <section className="mt-6 rounded-2xl bg-slate-900 border border-slate-700 p-6">
+          <h2 className="text-xl font-semibold mb-4">3. Ask the Portal</h2>
 
           <textarea
             className="w-full min-h-32 rounded-lg bg-slate-950 border border-slate-600 p-4 text-white outline-none focus:border-blue-400"
-            placeholder="Example: What courses should I take before graduation?"
+            placeholder="Example: What are the graduation requirements for students who entered in 2025?"
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
           />
@@ -98,13 +230,13 @@ export default function Home() {
             disabled={loading}
             className="mt-4 rounded-lg bg-blue-600 px-5 py-3 font-semibold hover:bg-blue-500 disabled:opacity-50"
           >
-            {loading ? "Thinking..." : "Ask"}
+            {loading ? "Searching..." : "Ask"}
           </button>
 
           {answer && (
             <div className="mt-6 rounded-lg bg-slate-950 border border-slate-700 p-5">
               <h3 className="font-semibold mb-2">Answer</h3>
-              <p className="text-slate-300">{answer}</p>
+              <p className="whitespace-pre-line text-slate-300">{answer}</p>
 
               {sources.length > 0 && (
                 <div className="mt-4">
@@ -118,8 +250,9 @@ export default function Home() {
               )}
             </div>
           )}
-        </div>
+        </section>
       </div>
     </main>
   );
 }
+EOF
