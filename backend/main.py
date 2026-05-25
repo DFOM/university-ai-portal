@@ -1,4 +1,3 @@
-cat > main.py <<'EOF'
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -38,19 +37,12 @@ def health_check():
 
 @app.post("/chat")
 def chat(request: ChatRequest):
-    question = request.question
-
     return {
-        "question": question,
-        "answer": (
-            "This is the demo AI response. Later, this endpoint will search the "
-            "Obsidian knowledge graph, send context to the local LLM, and return "
-            "a grounded student advising answer."
-        ),
+        "question": request.question,
+        "answer": "This is the demo AI response. Later this will connect to the Obsidian knowledge graph, local LLM, and IBM Quantum tools.",
         "sources": [
+            "Railway backend",
             "Obsidian knowledge graph",
-            "Local LLM worker",
-            "Railway backend"
+            "Local LLM worker"
         ]
     }
-EOF
