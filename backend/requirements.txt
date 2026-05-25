@@ -4,3 +4,5 @@ pydantic
 python-multipart
 pypdf
 httpx
+qiskit
+qiskit-ibm-runtime
