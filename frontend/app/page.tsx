@@ -13,18 +13,26 @@ type PlanOption = {
   description: string;
 };
 
-type AcademicPlanResult = {
+type FourYearPlanResult = {
   status: string;
   message?: string;
-  plans: PlanOption[];
-  recommended_plan: PlanOption;
-  execution_mode: string;
-  backend: string;
-  job_id?: string | null;
-  shots: number;
-  counts: Record<string, number>;
+  student_profile: {
+    entry_year: string;
+    major: string;
+    minor: string;
+    student_goal: string;
+    completed_courses: string;
+  };
+  recommended_strategy: PlanOption;
+  four_year_plan: string;
+  optimization: {
+    execution_mode: string;
+    backend: string;
+    job_id?: string | null;
+    shots: number;
+    counts: Record<string, number>;
+  };
   sources: string[];
-  explanation: string;
 };
 
 export default function Home() {
@@ -45,9 +53,16 @@ export default function Home() {
 
   const [uploading, setUploading] = useState(false);
   const [answerLoading, setAnswerLoading] = useState(false);
-  const [planLoading, setPlanLoading] = useState(false);
 
-  const [planResult, setPlanResult] = useState<AcademicPlanResult | null>(null);
+  const [plannerMajor, setPlannerMajor] = useState("");
+  const [plannerMinor, setPlannerMinor] = useState("");
+  const [plannerEntryYear, setPlannerEntryYear] = useState("2025");
+  const [plannerGoal, setPlannerGoal] = useState("");
+  const [completedCourses, setCompletedCourses] = useState("");
+  const [fourYearLoading, setFourYearLoading] = useState(false);
+  const [fourYearPlan, setFourYearPlan] = useState<FourYearPlanResult | null>(
+    null
+  );
 
   async function refreshKnowledge() {
     if (!apiUrl) return;
@@ -125,7 +140,7 @@ export default function Home() {
       setUploadMessage("Knowledge base has been reset.");
       setAnswer("");
       setSources([]);
-      setPlanResult(null);
+      setFourYearPlan(null);
       await refreshKnowledge();
     } catch {
       setUploadMessage("Could not reset the knowledge base.");
@@ -161,47 +176,59 @@ export default function Home() {
     }
   }
 
-  async function runAcademicPlanSearch() {
-    setPlanLoading(true);
-    setPlanResult(null);
+  async function generateFourYearPlan() {
+    setFourYearLoading(true);
+    setFourYearPlan(null);
 
     try {
-      const response = await fetch(`${apiUrl}/academic-plan-search`, {
+      const response = await fetch(`${apiUrl}/four-year-plan`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          question:
-            question ||
-            "Based on the uploaded academic documents, what should this student prioritize?",
+          major: plannerMajor,
+          minor: plannerMinor,
+          entry_year: plannerEntryYear,
+          student_goal: plannerGoal,
+          completed_courses: completedCourses,
+          semesters: 8,
           shots: 1024,
           use_ibm: true,
         }),
       });
 
       const data = await response.json();
-      setPlanResult(data);
+      setFourYearPlan(data);
     } catch {
-      setPlanResult({
+      setFourYearPlan({
         status: "unavailable",
-        plans: [],
-        recommended_plan: {
-          state: "11",
-          name: "Balanced Exploration Priority",
-          description:
-            "Balance academic requirements, electives, and schedule flexibility.",
+        student_profile: {
+          entry_year: plannerEntryYear,
+          major: plannerMajor,
+          minor: plannerMinor,
+          student_goal: plannerGoal,
+          completed_courses: completedCourses,
         },
-        execution_mode: "Unavailable",
-        backend: "Academic planning module",
-        job_id: null,
-        shots: 0,
-        counts: {},
+        recommended_strategy: {
+          state: "11",
+          name: "Balanced Major-Minor Pathway",
+          description:
+            "Balance graduation requirements, major progress, optional minor requirements, electives, and schedule flexibility.",
+        },
+        four_year_plan:
+          "The four-year planner is currently unavailable. Please try again.",
+        optimization: {
+          execution_mode: "Unavailable",
+          backend: "Academic planning module",
+          job_id: null,
+          shots: 0,
+          counts: {},
+        },
         sources: [],
-        explanation: "The academic plan search module is currently unavailable.",
       });
     } finally {
-      setPlanLoading(false);
+      setFourYearLoading(false);
     }
   }
 
@@ -212,13 +239,13 @@ export default function Home() {
           <p className="text-sm text-blue-400 mb-2">University AI Portal</p>
 
           <h1 className="text-4xl font-bold mb-4">
-            Knowledge Graph Assistant
+            Knowledge Graph Academic Planner
           </h1>
 
           <p className="text-slate-300 max-w-3xl">
             A student-facing academic assistant that combines university
             documents, structured knowledge retrieval, AI reasoning, and
-            computational planning tools in one portal.
+            IBM Quantum-compatible planning search in one portal.
           </p>
         </section>
 
@@ -274,8 +301,8 @@ export default function Home() {
             </h2>
 
             <p className="mb-4 text-sm text-slate-400">
-              Upload handbooks, syllabi, graduation requirements, or course
-              documents.
+              Upload handbooks, syllabi, graduation requirements, course lists,
+              major requirements, or minor requirements.
             </p>
 
             <input
@@ -337,100 +364,166 @@ export default function Home() {
         </section>
 
         <section className="mt-6 rounded-2xl bg-slate-900 border border-slate-700 p-6">
-          <h2 className="text-xl font-semibold mb-4">Academic Plan Search</h2>
+          <h2 className="text-xl font-semibold mb-4">
+            Four-Year Academic Planner
+          </h2>
 
           <p className="text-slate-300 mb-4 max-w-3xl">
-            This module compares possible academic planning strategies using the
-            uploaded university documents, then runs a search process to
-            highlight the strongest strategy for the student question.
+            Generate a four-year academic pathway using the uploaded university
+            documents, selected major, optional minor, completed courses, and
+            graduation priorities.
           </p>
 
+          <div className="grid gap-4 lg:grid-cols-2">
+            <div>
+              <label className="block text-sm text-slate-400 mb-1">
+                Entry Year
+              </label>
+              <input
+                value={plannerEntryYear}
+                onChange={(e) => setPlannerEntryYear(e.target.value)}
+                className="w-full rounded-lg bg-slate-950 border border-slate-600 p-3 text-white outline-none focus:border-blue-400"
+                placeholder="2025"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm text-slate-400 mb-1">Major</label>
+              <input
+                value={plannerMajor}
+                onChange={(e) => setPlannerMajor(e.target.value)}
+                className="w-full rounded-lg bg-slate-950 border border-slate-600 p-3 text-white outline-none focus:border-blue-400"
+                placeholder="Example: Global Business and Economics"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm text-slate-400 mb-1">
+                Minor Optional
+              </label>
+              <input
+                value={plannerMinor}
+                onChange={(e) => setPlannerMinor(e.target.value)}
+                className="w-full rounded-lg bg-slate-950 border border-slate-600 p-3 text-white outline-none focus:border-blue-400"
+                placeholder="Example: Data Science"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm text-slate-400 mb-1">
+                Completed Courses Optional
+              </label>
+              <input
+                value={completedCourses}
+                onChange={(e) => setCompletedCourses(e.target.value)}
+                className="w-full rounded-lg bg-slate-950 border border-slate-600 p-3 text-white outline-none focus:border-blue-400"
+                placeholder="Example: EAE A, Intro to Economics"
+              />
+            </div>
+          </div>
+
+          <div className="mt-4">
+            <label className="block text-sm text-slate-400 mb-1">
+              Student Goal
+            </label>
+            <textarea
+              value={plannerGoal}
+              onChange={(e) => setPlannerGoal(e.target.value)}
+              className="w-full min-h-24 rounded-lg bg-slate-950 border border-slate-600 p-3 text-white outline-none focus:border-blue-400"
+              placeholder="Example: Graduate on time while prioritizing major requirements and keeping room for exchange."
+            />
+          </div>
+
           <button
-            onClick={runAcademicPlanSearch}
-            disabled={planLoading}
-            className="rounded-lg bg-purple-600 px-5 py-3 font-semibold hover:bg-purple-500 disabled:opacity-50"
+            onClick={generateFourYearPlan}
+            disabled={fourYearLoading}
+            className="mt-4 rounded-lg bg-emerald-600 px-5 py-3 font-semibold hover:bg-emerald-500 disabled:opacity-50"
           >
-            {planLoading ? "Searching Academic Plans..." : "Run Academic Plan Search"}
+            {fourYearLoading
+              ? "Generating Four-Year Plan..."
+              : "Generate Four-Year Plan"}
           </button>
 
-          {planResult && (
+          {fourYearPlan && (
             <div className="mt-6 rounded-lg bg-slate-950 border border-slate-700 p-5">
-              <h3 className="font-semibold mb-2">Recommended Strategy</h3>
+              <h3 className="font-semibold mb-2">Generated Four-Year Plan</h3>
 
-              <p className="text-blue-300 text-lg font-semibold">
-                {planResult.recommended_plan.name}
-              </p>
-
-              <p className="mt-2 text-slate-300">
-                {planResult.recommended_plan.description}
-              </p>
-
-              {planResult.message && (
-                <p className="mt-3 text-yellow-300">{planResult.message}</p>
+              {fourYearPlan.message && (
+                <p className="mb-3 text-yellow-300">{fourYearPlan.message}</p>
               )}
 
-              <div className="mt-4 grid gap-4 lg:grid-cols-2">
-                <div className="rounded-lg bg-slate-900 border border-slate-700 p-4">
-                  <h4 className="font-semibold mb-2">Search Execution</h4>
+              <div className="rounded-lg bg-slate-900 border border-slate-700 p-4 mb-4">
+                <h4 className="font-semibold mb-2">
+                  Recommended Planning Strategy
+                </h4>
+                <p className="text-blue-300 font-semibold">
+                  {fourYearPlan.recommended_strategy.name}
+                </p>
+                <p className="text-slate-300 mt-1">
+                  {fourYearPlan.recommended_strategy.description}
+                </p>
+              </div>
 
+              <div className="rounded-lg bg-slate-900 border border-slate-700 p-4 mb-4">
+                <h4 className="font-semibold mb-2">Planning Output</h4>
+                <p className="whitespace-pre-line text-slate-300">
+                  {fourYearPlan.four_year_plan}
+                </p>
+              </div>
+
+              <div className="grid gap-4 lg:grid-cols-2">
+                <div className="rounded-lg bg-slate-900 border border-slate-700 p-4">
+                  <h4 className="font-semibold mb-2">Optimization Execution</h4>
                   <p className="text-slate-300">
                     Mode:{" "}
                     <span className="text-blue-300">
-                      {planResult.execution_mode}
+                      {fourYearPlan.optimization.execution_mode}
                     </span>
                   </p>
-
                   <p className="text-slate-300">
                     Backend:{" "}
-                    <span className="text-blue-300">{planResult.backend}</span>
+                    <span className="text-blue-300">
+                      {fourYearPlan.optimization.backend}
+                    </span>
                   </p>
-
-                  {planResult.job_id && (
+                  {fourYearPlan.optimization.job_id && (
                     <p className="text-slate-300">
                       Job ID:{" "}
-                      <span className="text-blue-300">{planResult.job_id}</span>
+                      <span className="text-blue-300">
+                        {fourYearPlan.optimization.job_id}
+                      </span>
                     </p>
                   )}
-
-                  <p className="text-slate-300">Shots: {planResult.shots}</p>
+                  <p className="text-slate-300">
+                    Shots: {fourYearPlan.optimization.shots}
+                  </p>
                 </div>
 
                 <div className="rounded-lg bg-slate-900 border border-slate-700 p-4">
-                  <h4 className="font-semibold mb-2">Search Results</h4>
-
-                  {Object.keys(planResult.counts).length > 0 ? (
+                  <h4 className="font-semibold mb-2">Optimization Counts</h4>
+                  {Object.keys(fourYearPlan.optimization.counts).length > 0 ? (
                     <ul className="list-disc list-inside text-slate-400">
-                      {Object.entries(planResult.counts).map(([state, count]) => {
-                        const plan = planResult.plans.find(
-                          (item) => item.state === state
-                        );
-
-                        return (
+                      {Object.entries(fourYearPlan.optimization.counts).map(
+                        ([state, count]) => (
                           <li key={state}>
-                            {state}
-                            {plan ? ` — ${plan.name}` : ""}: {count}
+                            {state}: {count}
                           </li>
-                        );
-                      })}
+                        )
+                      )}
                     </ul>
                   ) : (
                     <p className="text-slate-500 text-sm">
-                      No search counts available.
+                      No counts available.
                     </p>
                   )}
                 </div>
               </div>
 
-              <div className="mt-4 rounded-lg bg-slate-900 border border-slate-700 p-4">
-                <h4 className="font-semibold mb-2">Explanation</h4>
-                <p className="text-slate-300">{planResult.explanation}</p>
-              </div>
-
-              {planResult.sources.length > 0 && (
+              {fourYearPlan.sources.length > 0 && (
                 <div className="mt-4">
                   <h4 className="font-semibold mb-2">Sources</h4>
                   <ul className="list-disc list-inside text-slate-400">
-                    {planResult.sources.map((source, index) => (
+                    {fourYearPlan.sources.map((source, index) => (
                       <li key={index}>{source}</li>
                     ))}
                   </ul>
