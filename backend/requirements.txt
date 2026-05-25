@@ -3,3 +3,6 @@ uvicorn
 pydantic
 python-multipart
 pypdf
+qiskit
+qiskit-aer
+qiskit-ibm-runtime
