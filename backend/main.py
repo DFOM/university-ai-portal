@@ -11,8 +11,8 @@ import httpx
 
 app = FastAPI(
     title="University AI Portal Backend",
-    description="Temporary demo backend for uploaded university documents, LLM reasoning, and academic plan search.",
-    version="0.5.0",
+    description="Demo backend for uploaded university documents, LLM reasoning, IBM Quantum search, and four-year academic planning.",
+    version="0.6.0",
 )
 
 app.add_middleware(
@@ -32,6 +32,17 @@ class ChatRequest(BaseModel):
 
 class AcademicPlanSearchRequest(BaseModel):
     question: str = ""
+    shots: int = 1024
+    use_ibm: bool = True
+
+
+class FourYearPlanRequest(BaseModel):
+    major: str = ""
+    minor: str = ""
+    entry_year: str = "2025"
+    student_goal: str = ""
+    completed_courses: str = ""
+    semesters: int = 8
     shots: int = 1024
     use_ibm: bool = True
 
@@ -93,9 +104,9 @@ def score_chunk(question: str, chunk: str) -> int:
     return score
 
 
-def get_top_chunks(question: str, limit: int = 5):
+def get_top_chunks(question: str, limit: int = 8):
     if not question.strip():
-        question = "graduation requirements course credits major language academic plan"
+        question = "graduation requirements course credits major minor prerequisites 100 200 300 400 academic plan"
 
     scored_chunks = []
 
@@ -175,12 +186,12 @@ You are a polished university academic assistant.
 
 Rules:
 - Answer only using the provided uploaded document context.
-- Do not invent university requirements, policies, course rules, or numbers.
+- Do not invent university requirements, policies, course rules, course names, prerequisites, or credit numbers.
 - If the answer is not clearly supported by the context, say that the uploaded documents do not contain enough information.
 - Be clear, professional, and student-friendly.
 - Mention differences between student entry years if the context shows different rules.
 - Keep the answer concise but useful.
-- Do not mention internal implementation details such as chunks, temporary storage, APIs, Groq, or Railway.
+- Do not mention internal implementation details such as chunks, temporary storage, APIs, Groq, Railway, backend, or code.
 """
 
     user_prompt = f"""
@@ -214,7 +225,7 @@ Write the best answer using only the context above.
                         },
                     ],
                     "temperature": 0.2,
-                    "max_tokens": 700,
+                    "max_tokens": 800,
                 },
             )
 
@@ -232,22 +243,22 @@ def academic_plan_options():
         {
             "state": "00",
             "name": "Graduation Requirement Priority",
-            "description": "Prioritize required credits, category requirements, and graduation eligibility.",
+            "description": "Prioritize total credits, required categories, required courses, and graduation eligibility.",
         },
         {
             "state": "01",
             "name": "Major Progression Priority",
-            "description": "Prioritize major requirements, prerequisite order, and advanced course preparation.",
+            "description": "Prioritize major requirements, prerequisite order, upper-level preparation, and capstone readiness.",
         },
         {
             "state": "10",
             "name": "Language and Foundation Priority",
-            "description": "Prioritize EAE, Japanese language limits, and foundational academic requirements.",
+            "description": "Prioritize EAE, language limits, foundation courses, and early academic readiness.",
         },
         {
             "state": "11",
-            "name": "Balanced Exploration Priority",
-            "description": "Balance required courses with electives, interdisciplinary options, and schedule flexibility.",
+            "name": "Balanced Major-Minor Pathway",
+            "description": "Balance graduation requirements, major progress, optional minor requirements, electives, and schedule flexibility.",
         },
     ]
 
@@ -273,6 +284,8 @@ def choose_academic_plan(question: str, top_chunks):
         "semester",
         "2025",
         "2024",
+        "eligibility",
+        "category",
     ]
 
     major_words = [
@@ -283,6 +296,9 @@ def choose_academic_plan(question: str, top_chunks):
         "prerequisite",
         "seminar",
         "track",
+        "300",
+        "400",
+        "upper",
     ]
 
     language_words = [
@@ -292,6 +308,7 @@ def choose_academic_plan(question: str, top_chunks):
         "foundation",
         "exempted",
         "english",
+        "100",
     ]
 
     balanced_words = [
@@ -302,6 +319,8 @@ def choose_academic_plan(question: str, top_chunks):
         "interdisciplinary",
         "minor",
         "exchange",
+        "flexibility",
+        "200",
     ]
 
     for word in graduation_words:
@@ -362,7 +381,6 @@ def build_grover_circuit(marked_state: str):
     qc.h(0)
     qc.h(1)
 
-    # Oracle: convert marked state to |11>, apply CZ phase flip, undo conversion.
     if marked_state[1] == "0":
         qc.x(0)
     if marked_state[0] == "0":
@@ -375,7 +393,6 @@ def build_grover_circuit(marked_state: str):
     if marked_state[0] == "0":
         qc.x(1)
 
-    # Diffusion operator.
     qc.h(0)
     qc.h(1)
     qc.x(0)
@@ -428,7 +445,11 @@ def run_ibm_academic_search(marked_state: str, shots: int):
             sampler = Sampler(mode=session)
             job = sampler.run([isa_circuit], shots=shots)
             result = job.result()[0]
-            counts = result.data.c.get_counts()
+
+            try:
+                counts = result.data.c.get_counts()
+            except Exception:
+                counts = result.data.meas.get_counts()
 
         return {
             "execution_mode": "IBM Quantum Runtime",
@@ -464,7 +485,7 @@ Uploaded document context:
 {context}
 
 Write a short presentation-friendly explanation of why this strategy is recommended.
-Do not mention APIs, Groq, Railway, chunks, internal scoring, or backend details.
+Do not mention APIs, Groq, Railway, chunks, backend, code, or internal scoring.
 Use only the uploaded document context.
 """
 
@@ -504,6 +525,126 @@ Use only the uploaded document context.
         )
 
 
+def fallback_four_year_plan(request: FourYearPlanRequest, selected_plan):
+    major = request.major or "the selected major"
+    minor_text = f" with a minor in {request.minor}" if request.minor else ""
+    entry_year = request.entry_year or "the student's entry year"
+
+    return f"""
+# Four-Year Academic Plan Draft
+
+## Student Profile
+- Entry year: {entry_year}
+- Major: {major}
+- Minor: {request.minor or "Not specified"}
+- Planning priority: {selected_plan["name"]}
+
+## Year 1: Foundation and 100-level preparation
+- Focus on university-wide foundation requirements.
+- Begin introductory 100-level courses connected to {major}.
+- Complete language or EAE-related requirements if applicable.
+- Avoid overloading advanced courses before prerequisites are clear.
+
+## Year 2: Major entry and 200-level progression
+- Begin 200-level major courses.
+- Confirm category requirements and total credit progress.
+- If pursuing{minor_text}, start lower-level minor requirements.
+- Check prerequisites before selecting 300-level courses.
+
+## Year 3: Advanced major/minor development
+- Prioritize 300-level courses in the major.
+- Continue remaining minor or elective requirements.
+- Review graduation requirements against completed credits.
+- Identify missing categories early.
+
+## Year 4: Completion and graduation clearance
+- Prioritize 400-level major courses, capstone, seminar, thesis, or final requirements if applicable.
+- Complete remaining category, elective, major, and minor credits.
+- Verify total credits, required courses, and graduation eligibility.
+- Keep schedule flexible in case a required course is only offered once per year.
+
+## Assumptions
+- This is a prototype plan based on uploaded documents and the student's stated goal.
+- Exact course names and semester availability must be checked against the official course schedule.
+- Prerequisites must be confirmed before registration.
+"""
+
+
+async def build_four_year_plan_with_llm(request: FourYearPlanRequest, selected_plan, top_chunks):
+    api_key = os.getenv("GROQ_API_KEY")
+    model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+
+    if not api_key or not top_chunks:
+        return fallback_four_year_plan(request, selected_plan)
+
+    context = build_context(top_chunks)
+
+    prompt = f"""
+You are building a presentation-quality four-year academic plan for a university student.
+
+Student information:
+- Entry year: {request.entry_year}
+- Major: {request.major or "Not specified"}
+- Minor: {request.minor or "Not specified"}
+- Student goal: {request.student_goal or "Graduate efficiently while satisfying graduation, major, and optional minor requirements"}
+- Completed courses: {request.completed_courses or "Not specified"}
+- Number of semesters to plan: {request.semesters}
+
+Recommended planning strategy:
+{selected_plan["name"]}: {selected_plan["description"]}
+
+Uploaded academic document context:
+{context}
+
+Task:
+Create a clear four-year academic plan.
+
+Rules:
+- Use only the uploaded document context.
+- Prioritize graduation requirements first.
+- Respect entry-year differences if the documents mention different rules for 2025 or earlier years.
+- Organize the plan by Year 1, Year 2, Year 3, and Year 4.
+- Explain 100-level, 200-level, 300-level, and 400-level progression.
+- Include major and minor planning if the minor is provided.
+- If exact course names are not available in the context, write "course to be selected from official list" instead of inventing course names.
+- Include assumptions, missing information, and warnings.
+- Do not mention APIs, Groq, Railway, chunks, backend, code, or internal implementation.
+- Output in readable Markdown-style text.
+"""
+
+    try:
+        async with httpx.AsyncClient(timeout=35.0) as client:
+            response = await client.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": "You are a careful academic planning assistant. You must not invent university rules, courses, prerequisites, or credit numbers.",
+                        },
+                        {
+                            "role": "user",
+                            "content": prompt,
+                        },
+                    ],
+                    "temperature": 0.2,
+                    "max_tokens": 1500,
+                },
+            )
+
+        response.raise_for_status()
+        data = response.json()
+        return data["choices"][0]["message"]["content"]
+
+    except Exception:
+        return fallback_four_year_plan(request, selected_plan)
+
+
 @app.get("/")
 def root():
     loaded_files = len(set(item["filename"] for item in KNOWLEDGE_STORE))
@@ -518,7 +659,8 @@ def root():
             "document upload",
             "document retrieval",
             "LLM-assisted academic answers",
-            "academic plan search",
+            "IBM Quantum-compatible academic planning search",
+            "four-year academic planner",
         ],
     }
 
@@ -527,6 +669,20 @@ def root():
 def health_check():
     return {
         "status": "ok",
+    }
+
+
+@app.get("/debug-routes")
+def debug_routes():
+    return {
+        "routes": [
+            {
+                "path": route.path,
+                "methods": list(route.methods),
+            }
+            for route in app.routes
+            if hasattr(route, "methods")
+        ]
     }
 
 
@@ -603,7 +759,7 @@ async def chat(request: ChatRequest):
             "sources": [],
         }
 
-    top_chunks = get_top_chunks(question, limit=5)
+    top_chunks = get_top_chunks(question, limit=6)
 
     if not top_chunks:
         return {
@@ -646,7 +802,7 @@ async def academic_plan_search(request: AcademicPlanSearchRequest):
             "explanation": "The system is ready to search academic planning options once documents are added.",
         }
 
-    top_chunks = get_top_chunks(question, limit=5)
+    top_chunks = get_top_chunks(question, limit=6)
     selected_plan, scores = choose_academic_plan(question, top_chunks)
 
     ibm_result = None
@@ -679,4 +835,96 @@ async def academic_plan_search(request: AcademicPlanSearchRequest):
         "counts": counts,
         "sources": sources,
         "explanation": explanation,
+    }
+
+
+@app.post("/four-year-plan")
+async def four_year_plan(request: FourYearPlanRequest):
+    shots = max(128, min(request.shots, 2048))
+
+    planning_question = f"""
+Build a four-year academic schedule.
+Entry year: {request.entry_year}
+Major: {request.major}
+Minor: {request.minor}
+Student goal: {request.student_goal}
+Completed courses: {request.completed_courses}
+Prioritize graduation requirements, major requirements, minor requirements, prerequisites, and 100/200/300/400-level progression.
+"""
+
+    if not KNOWLEDGE_STORE:
+        options = academic_plan_options()
+        selected_plan = options[3]
+        counts = grover_fallback_counts(selected_plan["state"], shots)
+
+        return {
+            "status": "ready",
+            "message": "Upload academic documents first to generate a document-aware four-year plan.",
+            "student_profile": {
+                "entry_year": request.entry_year,
+                "major": request.major,
+                "minor": request.minor,
+                "student_goal": request.student_goal,
+                "completed_courses": request.completed_courses,
+            },
+            "recommended_strategy": selected_plan,
+            "four_year_plan": fallback_four_year_plan(request, selected_plan),
+            "optimization": {
+                "execution_mode": "Planning preview",
+                "backend": "Internal planning module",
+                "job_id": None,
+                "shots": shots,
+                "counts": counts,
+            },
+            "sources": [],
+        }
+
+    top_chunks = get_top_chunks(planning_question, limit=8)
+
+    if not top_chunks:
+        top_chunks = get_top_chunks(
+            "graduation requirements major minor credits courses prerequisite 100 200 300 400",
+            limit=8,
+        )
+
+    selected_plan, scores = choose_academic_plan(planning_question, top_chunks)
+
+    ibm_result = None
+
+    if request.use_ibm:
+        ibm_result = run_ibm_academic_search(selected_plan["state"], shots)
+
+    if ibm_result:
+        optimization = {
+            "execution_mode": ibm_result["execution_mode"],
+            "backend": ibm_result["backend"],
+            "job_id": ibm_result["job_id"],
+            "shots": shots,
+            "counts": ibm_result["counts"],
+        }
+    else:
+        optimization = {
+            "execution_mode": "Quantum-inspired academic planning search",
+            "backend": "Academic planning search module",
+            "job_id": None,
+            "shots": shots,
+            "counts": grover_fallback_counts(selected_plan["state"], shots),
+        }
+
+    plan_text = await build_four_year_plan_with_llm(request, selected_plan, top_chunks)
+    sources = list(dict.fromkeys(chunk["filename"] for chunk in top_chunks))
+
+    return {
+        "status": "success",
+        "student_profile": {
+            "entry_year": request.entry_year,
+            "major": request.major,
+            "minor": request.minor,
+            "student_goal": request.student_goal,
+            "completed_courses": request.completed_courses,
+        },
+        "recommended_strategy": selected_plan,
+        "four_year_plan": plan_text,
+        "optimization": optimization,
+        "sources": sources,
     }
