@@ -7,22 +7,33 @@ type KnowledgeStatus = {
   total_chunks: number;
 };
 
-type QuantumResult = {
-  mode: string;
+type PlanOption = {
+  state: string;
+  name: string;
+  description: string;
+};
+
+type AcademicPlanResult = {
+  status: string;
+  message?: string;
+  plans: PlanOption[];
+  recommended_plan: PlanOption;
+  execution_mode: string;
   backend: string;
-  job_id?: string;
-  circuit: string;
+  job_id?: string | null;
   shots: number;
   counts: Record<string, number>;
+  sources: string[];
   explanation: string;
-  error?: string;
 };
 
 export default function Home() {
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "";
 
-  const [backendMessage, setBackendMessage] = useState("Checking backend...");
-  const [backendStatus, setBackendStatus] = useState("loading");
+  const [backendMessage, setBackendMessage] = useState("Connecting to system...");
+  const [backendStatus, setBackendStatus] = useState<
+    "loading" | "online" | "offline"
+  >("loading");
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadMessage, setUploadMessage] = useState("");
@@ -31,14 +42,16 @@ export default function Home() {
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
   const [sources, setSources] = useState<string[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [uploading, setUploading] = useState(false);
 
-  const [quantumLoading, setQuantumLoading] = useState(false);
-  const [quantumResult, setQuantumResult] = useState<QuantumResult | null>(null);
-  const [useRealIbm, setUseRealIbm] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [answerLoading, setAnswerLoading] = useState(false);
+  const [planLoading, setPlanLoading] = useState(false);
+
+  const [planResult, setPlanResult] = useState<AcademicPlanResult | null>(null);
 
   async function refreshKnowledge() {
+    if (!apiUrl) return;
+
     try {
       const response = await fetch(`${apiUrl}/knowledge`);
       const data = await response.json();
@@ -49,14 +62,20 @@ export default function Home() {
   }
 
   useEffect(() => {
+    if (!apiUrl) {
+      setBackendMessage("System API is not configured.");
+      setBackendStatus("offline");
+      return;
+    }
+
     fetch(`${apiUrl}/`)
       .then((res) => res.json())
       .then((data) => {
-        setBackendMessage(data.message);
+        setBackendMessage(data.message || "System online");
         setBackendStatus("online");
       })
       .catch(() => {
-        setBackendMessage("Backend connection failed");
+        setBackendMessage("System connection unavailable");
         setBackendStatus("offline");
       });
 
@@ -65,7 +84,7 @@ export default function Home() {
 
   async function uploadFile() {
     if (!selectedFile) {
-      setUploadMessage("Choose a file first.");
+      setUploadMessage("Please choose a file first.");
       return;
     }
 
@@ -84,25 +103,39 @@ export default function Home() {
       const data = await response.json();
 
       if (data.status === "success") {
-        setUploadMessage(
-          `Uploaded ${data.filename}. Added ${data.chunks_added} temporary knowledge chunks.`
-        );
+        setUploadMessage(`${data.filename} was added to the knowledge base.`);
         setSelectedFile(null);
         await refreshKnowledge();
       } else {
         setUploadMessage(data.message || "Upload failed.");
       }
     } catch {
-      setUploadMessage("Upload failed. Backend may be offline.");
+      setUploadMessage("Upload failed. Please try again.");
     } finally {
       setUploading(false);
+    }
+  }
+
+  async function clearKnowledge() {
+    try {
+      await fetch(`${apiUrl}/knowledge`, {
+        method: "DELETE",
+      });
+
+      setUploadMessage("Knowledge base has been reset.");
+      setAnswer("");
+      setSources([]);
+      setPlanResult(null);
+      await refreshKnowledge();
+    } catch {
+      setUploadMessage("Could not reset the knowledge base.");
     }
   }
 
   async function askQuestion() {
     if (!question.trim()) return;
 
-    setLoading(true);
+    setAnswerLoading(true);
     setAnswer("");
     setSources([]);
 
@@ -119,81 +152,79 @@ export default function Home() {
 
       const data = await response.json();
 
-      setAnswer(data.answer);
+      setAnswer(data.answer || "No answer was returned.");
       setSources(data.sources || []);
     } catch {
-      setAnswer("Failed to contact backend chat endpoint.");
+      setAnswer("The assistant could not complete the request. Please try again.");
     } finally {
-      setLoading(false);
+      setAnswerLoading(false);
     }
   }
 
-  async function clearKnowledge() {
-    try {
-      await fetch(`${apiUrl}/knowledge`, {
-        method: "DELETE",
-      });
-
-      setUploadMessage("Temporary knowledge store cleared.");
-      setAnswer("");
-      setSources([]);
-      await refreshKnowledge();
-    } catch {
-      setUploadMessage("Failed to clear knowledge store.");
-    }
-  }
-
-  async function runQuantumDemo() {
-    setQuantumLoading(true);
-    setQuantumResult(null);
+  async function runAcademicPlanSearch() {
+    setPlanLoading(true);
+    setPlanResult(null);
 
     try {
-      const response = await fetch(`${apiUrl}/quantum-demo`, {
+      const response = await fetch(`${apiUrl}/academic-plan-search`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          use_real_ibm: useRealIbm,
+          question:
+            question ||
+            "Based on the uploaded academic documents, what should this student prioritize?",
           shots: 1024,
+          use_ibm: true,
         }),
       });
 
       const data = await response.json();
-      setQuantumResult(data);
+      setPlanResult(data);
     } catch {
-      setQuantumResult({
-        mode: "frontend_error",
-        backend: "none",
-        circuit: "N/A",
+      setPlanResult({
+        status: "unavailable",
+        plans: [],
+        recommended_plan: {
+          state: "11",
+          name: "Balanced Exploration Priority",
+          description:
+            "Balance academic requirements, electives, and schedule flexibility.",
+        },
+        execution_mode: "Unavailable",
+        backend: "Academic planning module",
+        job_id: null,
         shots: 0,
         counts: {},
-        explanation: "Failed to contact the quantum demo endpoint.",
+        sources: [],
+        explanation: "The academic plan search module is currently unavailable.",
       });
     } finally {
-      setQuantumLoading(false);
+      setPlanLoading(false);
     }
   }
 
   return (
     <main className="min-h-screen bg-slate-950 text-white p-6">
       <div className="mx-auto max-w-6xl">
-        <div className="mb-8 rounded-2xl bg-slate-900 border border-slate-700 p-8 shadow-xl">
+        <section className="mb-8 rounded-2xl bg-slate-900 border border-slate-700 p-8 shadow-xl">
           <p className="text-sm text-blue-400 mb-2">University AI Portal</p>
 
           <h1 className="text-4xl font-bold mb-4">
-            Temporary Knowledge Graph + Quantum Demo
+            Knowledge Graph Assistant
           </h1>
 
-          <p className="text-slate-300">
-            Upload university documents, ask questions from the temporary
-            knowledge store, and run a small quantum computing demo.
+          <p className="text-slate-300 max-w-3xl">
+            A student-facing academic assistant that combines university
+            documents, structured knowledge retrieval, AI reasoning, and
+            computational planning tools in one portal.
           </p>
-        </div>
+        </section>
 
         <div className="grid gap-6 lg:grid-cols-2">
           <section className="rounded-2xl bg-slate-900 border border-slate-700 p-6">
-            <h2 className="text-xl font-semibold mb-3">1. System Status</h2>
+            <h2 className="text-xl font-semibold mb-3">System Status</h2>
 
             <p
               className={
@@ -208,25 +239,23 @@ export default function Home() {
             </p>
 
             <div className="mt-4 rounded-xl bg-slate-800 border border-slate-700 p-4">
-              <h3 className="font-semibold mb-2">
-                Temporary Knowledge Store
-              </h3>
+              <h3 className="font-semibold mb-2">Knowledge Base</h3>
 
               <p className="text-slate-300">
-                Total chunks: {knowledge?.total_chunks ?? 0}
+                Indexed sections: {knowledge?.total_chunks ?? 0}
               </p>
 
               {knowledge && Object.keys(knowledge.files).length > 0 ? (
                 <ul className="mt-3 list-disc list-inside text-slate-400 text-sm">
                   {Object.entries(knowledge.files).map(([filename, chunks]) => (
                     <li key={filename}>
-                      {filename} — {chunks} chunks
+                      {filename} — {chunks} indexed sections
                     </li>
                   ))}
                 </ul>
               ) : (
                 <p className="mt-2 text-slate-500 text-sm">
-                  No files uploaded yet.
+                  No documents have been added yet.
                 </p>
               )}
 
@@ -234,15 +263,20 @@ export default function Home() {
                 onClick={clearKnowledge}
                 className="mt-4 rounded-lg bg-slate-700 px-4 py-2 text-sm hover:bg-slate-600"
               >
-                Clear temporary knowledge
+                Reset Knowledge Base
               </button>
             </div>
           </section>
 
           <section className="rounded-2xl bg-slate-900 border border-slate-700 p-6">
             <h2 className="text-xl font-semibold mb-3">
-              2. Upload Knowledge File
+              Add Academic Documents
             </h2>
+
+            <p className="mb-4 text-sm text-slate-400">
+              Upload handbooks, syllabi, graduation requirements, or course
+              documents.
+            </p>
 
             <input
               type="file"
@@ -256,7 +290,7 @@ export default function Home() {
               disabled={uploading}
               className="mt-4 rounded-lg bg-blue-600 px-5 py-3 font-semibold hover:bg-blue-500 disabled:opacity-50"
             >
-              {uploading ? "Uploading..." : "Upload File"}
+              {uploading ? "Indexing Document..." : "Add to Knowledge Base"}
             </button>
 
             {uploadMessage && (
@@ -266,7 +300,7 @@ export default function Home() {
         </div>
 
         <section className="mt-6 rounded-2xl bg-slate-900 border border-slate-700 p-6">
-          <h2 className="text-xl font-semibold mb-4">3. Ask the Portal</h2>
+          <h2 className="text-xl font-semibold mb-4">Ask the Assistant</h2>
 
           <textarea
             className="w-full min-h-32 rounded-lg bg-slate-950 border border-slate-600 p-4 text-white outline-none focus:border-blue-400"
@@ -277,10 +311,10 @@ export default function Home() {
 
           <button
             onClick={askQuestion}
-            disabled={loading}
+            disabled={answerLoading}
             className="mt-4 rounded-lg bg-blue-600 px-5 py-3 font-semibold hover:bg-blue-500 disabled:opacity-50"
           >
-            {loading ? "Searching..." : "Ask"}
+            {answerLoading ? "Searching Knowledge Base..." : "Ask Assistant"}
           </button>
 
           {answer && (
@@ -303,81 +337,105 @@ export default function Home() {
         </section>
 
         <section className="mt-6 rounded-2xl bg-slate-900 border border-slate-700 p-6">
-          <h2 className="text-xl font-semibold mb-4">
-            4. IBM Quantum Demo
-          </h2>
+          <h2 className="text-xl font-semibold mb-4">Academic Plan Search</h2>
 
-          <p className="text-slate-300 mb-4">
-            This runs a Bell-state quantum circuit demo. For tomorrow, keep
-            real IBM hardware off unless your IBM token is already configured.
+          <p className="text-slate-300 mb-4 max-w-3xl">
+            This module compares possible academic planning strategies using the
+            uploaded university documents, then runs a search process to
+            highlight the strongest strategy for the student question.
           </p>
 
-          <label className="flex items-center gap-3 text-sm text-slate-300">
-            <input
-              type="checkbox"
-              checked={useRealIbm}
-              onChange={(e) => setUseRealIbm(e.target.checked)}
-            />
-            Try real IBM Quantum hardware
-          </label>
-
           <button
-            onClick={runQuantumDemo}
-            disabled={quantumLoading}
-            className="mt-4 rounded-lg bg-purple-600 px-5 py-3 font-semibold hover:bg-purple-500 disabled:opacity-50"
+            onClick={runAcademicPlanSearch}
+            disabled={planLoading}
+            className="rounded-lg bg-purple-600 px-5 py-3 font-semibold hover:bg-purple-500 disabled:opacity-50"
           >
-            {quantumLoading ? "Running Quantum Demo..." : "Run Quantum Demo"}
+            {planLoading ? "Searching Academic Plans..." : "Run Academic Plan Search"}
           </button>
 
-          {quantumResult && (
+          {planResult && (
             <div className="mt-6 rounded-lg bg-slate-950 border border-slate-700 p-5">
-              <h3 className="font-semibold mb-2">Quantum Result</h3>
+              <h3 className="font-semibold mb-2">Recommended Strategy</h3>
 
-              <p className="text-slate-300">
-                Mode: <span className="text-blue-300">{quantumResult.mode}</span>
+              <p className="text-blue-300 text-lg font-semibold">
+                {planResult.recommended_plan.name}
               </p>
 
-              <p className="text-slate-300">
-                Backend:{" "}
-                <span className="text-blue-300">{quantumResult.backend}</span>
+              <p className="mt-2 text-slate-300">
+                {planResult.recommended_plan.description}
               </p>
 
-              {quantumResult.job_id && (
-                <p className="text-slate-300">
-                  Job ID:{" "}
-                  <span className="text-blue-300">{quantumResult.job_id}</span>
-                </p>
+              {planResult.message && (
+                <p className="mt-3 text-yellow-300">{planResult.message}</p>
               )}
 
-              {quantumResult.error && (
-                <p className="mt-3 text-yellow-300">
-                  Error / fallback reason: {quantumResult.error}
-                </p>
-              )}
+              <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                <div className="rounded-lg bg-slate-900 border border-slate-700 p-4">
+                  <h4 className="font-semibold mb-2">Search Execution</h4>
 
-              <p className="mt-3 text-slate-300">
-                Circuit: {quantumResult.circuit}
-              </p>
+                  <p className="text-slate-300">
+                    Mode:{" "}
+                    <span className="text-blue-300">
+                      {planResult.execution_mode}
+                    </span>
+                  </p>
 
-              <p className="mt-3 text-slate-300">
-                Shots: {quantumResult.shots}
-              </p>
+                  <p className="text-slate-300">
+                    Backend:{" "}
+                    <span className="text-blue-300">{planResult.backend}</span>
+                  </p>
 
-              <div className="mt-3">
-                <h4 className="font-semibold mb-2">Counts</h4>
+                  {planResult.job_id && (
+                    <p className="text-slate-300">
+                      Job ID:{" "}
+                      <span className="text-blue-300">{planResult.job_id}</span>
+                    </p>
+                  )}
 
-                <ul className="list-disc list-inside text-slate-400">
-                  {Object.entries(quantumResult.counts).map(([state, count]) => (
-                    <li key={state}>
-                      {state}: {count}
-                    </li>
-                  ))}
-                </ul>
+                  <p className="text-slate-300">Shots: {planResult.shots}</p>
+                </div>
+
+                <div className="rounded-lg bg-slate-900 border border-slate-700 p-4">
+                  <h4 className="font-semibold mb-2">Search Results</h4>
+
+                  {Object.keys(planResult.counts).length > 0 ? (
+                    <ul className="list-disc list-inside text-slate-400">
+                      {Object.entries(planResult.counts).map(([state, count]) => {
+                        const plan = planResult.plans.find(
+                          (item) => item.state === state
+                        );
+
+                        return (
+                          <li key={state}>
+                            {state}
+                            {plan ? ` — ${plan.name}` : ""}: {count}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  ) : (
+                    <p className="text-slate-500 text-sm">
+                      No search counts available.
+                    </p>
+                  )}
+                </div>
               </div>
 
-              <p className="mt-4 text-slate-300">
-                {quantumResult.explanation}
-              </p>
+              <div className="mt-4 rounded-lg bg-slate-900 border border-slate-700 p-4">
+                <h4 className="font-semibold mb-2">Explanation</h4>
+                <p className="text-slate-300">{planResult.explanation}</p>
+              </div>
+
+              {planResult.sources.length > 0 && (
+                <div className="mt-4">
+                  <h4 className="font-semibold mb-2">Sources</h4>
+                  <ul className="list-disc list-inside text-slate-400">
+                    {planResult.sources.map((source, index) => (
+                      <li key={index}>{source}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
         </section>
