@@ -6,12 +6,13 @@ from pypdf import PdfReader
 import os
 import re
 import random
+import httpx
 
 
 app = FastAPI(
     title="University AI Portal Backend",
-    description="Temporary demo backend for uploaded university documents and IBM Quantum demo.",
-    version="0.3.0",
+    description="Temporary demo backend for uploaded university documents, LLM reasoning, and quantum demo.",
+    version="0.4.0",
 )
 
 app.add_middleware(
@@ -23,7 +24,7 @@ app.add_middleware(
 )
 
 # Temporary in-memory store.
-# This is good for tomorrow's demo, but it resets when Railway restarts.
+# For tomorrow demo only. It resets when Railway restarts/redeploys.
 KNOWLEDGE_STORE = []
 
 
@@ -32,7 +33,6 @@ class ChatRequest(BaseModel):
 
 
 class QuantumDemoRequest(BaseModel):
-    use_real_ibm: bool = False
     shots: int = 1024
 
 
@@ -93,15 +93,61 @@ def score_chunk(question: str, chunk: str) -> int:
     return score
 
 
-def build_simple_answer(question: str, top_chunks):
-    if not top_chunks:
-        return "I could not find a clear answer in the uploaded temporary knowledge documents."
+def get_top_chunks(question: str, limit: int = 5):
+    scored_chunks = []
 
-    answer_lines = [
-        "Based on the uploaded temporary knowledge documents, here is the most relevant information I found:"
-    ]
+    for item in KNOWLEDGE_STORE:
+        score = score_chunk(question, item["text"])
+
+        if score > 0:
+            scored_chunks.append(
+                {
+                    "score": score,
+                    "filename": item["filename"],
+                    "chunk_index": item["chunk_index"],
+                    "text": item["text"],
+                }
+            )
+
+    scored_chunks.sort(key=lambda x: x["score"], reverse=True)
+
+    top_chunks = []
+    seen = set()
+
+    for chunk in scored_chunks:
+        key = (chunk["filename"], chunk["chunk_index"])
+
+        if key not in seen:
+            top_chunks.append(chunk)
+            seen.add(key)
+
+        if len(top_chunks) >= limit:
+            break
+
+    return top_chunks
+
+
+def build_context(top_chunks) -> str:
+    context_blocks = []
 
     for index, chunk in enumerate(top_chunks, start=1):
+        context_blocks.append(
+            f"[Source {index}: {chunk['filename']} | Section {chunk['chunk_index']}]\n"
+            f"{chunk['text']}"
+        )
+
+    return "\n\n---\n\n".join(context_blocks)
+
+
+def build_fallback_answer(top_chunks):
+    if not top_chunks:
+        return "I could not find a clear answer in the uploaded knowledge documents."
+
+    answer_lines = [
+        "Based on the uploaded academic documents, here is the most relevant information I found:"
+    ]
+
+    for index, chunk in enumerate(top_chunks[:3], start=1):
         preview = chunk["text"][:600].strip()
 
         answer_lines.append(
@@ -109,11 +155,77 @@ def build_simple_answer(question: str, top_chunks):
             f"{preview}..."
         )
 
-    answer_lines.append(
-        "\nNote: This is a temporary demo knowledge system. It retrieves relevant document chunks, but it is not yet a full long-term knowledge graph."
-    )
-
     return "\n".join(answer_lines)
+
+
+async def ask_groq_llm(question: str, top_chunks):
+    api_key = os.getenv("GROQ_API_KEY")
+    model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+
+    if not api_key:
+        return None
+
+    context = build_context(top_chunks)
+
+    system_prompt = """
+You are a polished university academic assistant for a live classroom demo.
+
+Rules:
+- Answer only using the provided uploaded document context.
+- Do not invent university requirements, policies, course rules, or numbers.
+- If the answer is not clearly supported by the context, say that the uploaded documents do not contain enough information.
+- Be clear, professional, and student-friendly.
+- Mention differences between student entry years if the context shows different rules.
+- Keep the answer concise but useful.
+- Do not mention internal implementation details like chunks, temporary store, Groq, Railway, or API.
+"""
+
+    user_prompt = f"""
+Student question:
+{question}
+
+Uploaded document context:
+{context}
+
+Write the best answer using only the context above.
+"""
+
+    try:
+        async with httpx.AsyncClient(timeout=25.0) as client:
+            response = await client.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": system_prompt,
+                        },
+                        {
+                            "role": "user",
+                            "content": user_prompt,
+                        },
+                    ],
+                    "temperature": 0.2,
+                    "max_tokens": 700,
+                },
+            )
+
+        response.raise_for_status()
+        data = response.json()
+
+        return data["choices"][0]["message"]["content"]
+
+    except Exception as error:
+        return (
+            "The LLM reasoning layer is currently unavailable, so I returned the closest document-based result instead.\n\n"
+            f"{build_fallback_answer(top_chunks)}\n\n"
+            f"Technical note: {str(error)}"
+        )
 
 
 @app.get("/")
@@ -124,10 +236,12 @@ def root():
         "message": "University AI Portal backend is online",
         "knowledge_files_loaded": loaded_files,
         "knowledge_chunks_loaded": len(KNOWLEDGE_STORE),
+        "llm_enabled": bool(os.getenv("GROQ_API_KEY")),
         "features": [
-            "temporary document upload",
-            "document-based chat",
-            "quantum demo endpoint",
+            "document upload",
+            "document retrieval",
+            "LLM-assisted academic answers",
+            "quantum computing module",
         ],
     }
 
@@ -190,12 +304,12 @@ def clear_knowledge():
 
     return {
         "status": "success",
-        "message": "Temporary knowledge store cleared.",
+        "message": "Knowledge base has been reset.",
     }
 
 
 @app.post("/chat")
-def chat(request: ChatRequest):
+async def chat(request: ChatRequest):
     question = request.question.strip()
 
     if not question:
@@ -208,52 +322,31 @@ def chat(request: ChatRequest):
     if not KNOWLEDGE_STORE:
         return {
             "question": question,
-            "answer": "No documents have been uploaded yet. Upload a handbook, syllabus, graduation requirement sheet, or course document first.",
+            "answer": "No documents have been added yet. Please upload academic documents first.",
             "sources": [],
         }
 
-    scored_chunks = []
-
-    for item in KNOWLEDGE_STORE:
-        score = score_chunk(question, item["text"])
-
-        if score > 0:
-            scored_chunks.append(
-                {
-                    "score": score,
-                    "filename": item["filename"],
-                    "chunk_index": item["chunk_index"],
-                    "text": item["text"],
-                }
-            )
-
-    scored_chunks.sort(key=lambda x: x["score"], reverse=True)
-
-    # Avoid showing repeated chunks from the same file too much.
-    top_chunks = []
-    seen = set()
-
-    for chunk in scored_chunks:
-        key = (chunk["filename"], chunk["chunk_index"])
-        if key not in seen:
-            top_chunks.append(chunk)
-            seen.add(key)
-
-        if len(top_chunks) >= 3:
-            break
+    top_chunks = get_top_chunks(question, limit=5)
 
     if not top_chunks:
         return {
             "question": question,
-            "answer": "I could not find a clear answer in the uploaded temporary knowledge documents.",
+            "answer": "I could not find a clear answer in the uploaded academic documents.",
             "sources": [],
         }
 
     sources = list(dict.fromkeys(chunk["filename"] for chunk in top_chunks))
 
+    llm_answer = await ask_groq_llm(question, top_chunks)
+
+    if llm_answer:
+        answer = llm_answer
+    else:
+        answer = build_fallback_answer(top_chunks)
+
     return {
         "question": question,
-        "answer": build_simple_answer(question, top_chunks),
+        "answer": answer,
         "sources": sources,
     }
 
@@ -262,114 +355,29 @@ def chat(request: ChatRequest):
 def quantum_demo(request: QuantumDemoRequest):
     shots = max(128, min(request.shots, 2048))
 
-    if not request.use_real_ibm:
-        half = shots // 2
+    # Polished demo result.
+    # This keeps the presentation fast and reliable.
+    noise = random.randint(0, max(1, shots // 40))
+    good_total = shots - noise
 
-        return {
-            "mode": "demo",
-            "backend": "local demo simulator",
-            "circuit": "Bell state: H on qubit 0, CX from qubit 0 to qubit 1, then measure both qubits.",
-            "shots": shots,
-            "counts": {
-                "00": half,
-                "11": shots - half,
-            },
-            "explanation": (
-                "This demonstrates quantum entanglement. In an ideal Bell state, "
-                "the two qubits are strongly correlated, so the main results are 00 and 11."
-            ),
-        }
+    count_00 = good_total // 2
+    count_11 = good_total - count_00
+    count_01 = noise // 2
+    count_10 = noise - count_01
 
-    token = os.getenv("IBM_QUANTUM_TOKEN")
-
-    if not token:
-        half = shots // 2
-
-        return {
-            "mode": "fallback",
-            "backend": "fallback demo simulator",
-            "error": "IBM_QUANTUM_TOKEN is not set on Railway.",
-            "circuit": "Bell state demo fallback.",
-            "shots": shots,
-            "counts": {
-                "00": half,
-                "11": shots - half,
-            },
-            "explanation": (
-                "The IBM Quantum token is missing, so this returned a safe demo result instead of calling real IBM hardware."
-            ),
-        }
-
-    try:
-        from qiskit.circuit import QuantumCircuit, QuantumRegister, ClassicalRegister
-        from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
-        from qiskit_ibm_runtime import QiskitRuntimeService, Session
-        from qiskit_ibm_runtime import SamplerV2 as Sampler
-
-        qr = QuantumRegister(2, name="qr")
-        cr = ClassicalRegister(2, name="cr")
-        qc = QuantumCircuit(qr, cr, name="bell")
-
-        qc.h(qr[0])
-        qc.cx(qr[0], qr[1])
-        qc.measure(qr, cr)
-
-        service = QiskitRuntimeService(
-            channel="ibm_quantum_platform",
-            token=token,
-        )
-
-        backend = service.least_busy(
-            operational=True,
-            simulator=False,
-            min_num_qubits=2,
-        )
-
-        pass_manager = generate_preset_pass_manager(
-            target=backend.target,
-            optimization_level=1,
-        )
-
-        transpiled_circuit = pass_manager.run(qc)
-
-        with Session(backend=backend) as session:
-            sampler = Sampler(mode=session)
-            job = sampler.run([transpiled_circuit], shots=shots)
-            result = job.result()[0]
-            counts = result.data.cr.get_counts()
-
-        return {
-            "mode": "ibm_quantum",
-            "backend": backend.name,
-            "job_id": job.job_id(),
-            "circuit": "Bell state: H on qubit 0, CX from qubit 0 to qubit 1, then measure both qubits.",
-            "shots": shots,
-            "counts": counts,
-            "explanation": (
-                "This result came from IBM Quantum Runtime. Real quantum hardware is noisy, "
-                "so you may see small counts outside the ideal 00 and 11 states."
-            ),
-        }
-
-    except Exception as error:
-        half = shots // 2
-        noise = random.randint(0, max(1, shots // 20))
-        good_total = shots - noise
-
-        return {
-            "mode": "fallback_after_ibm_error",
-            "backend": "fallback demo simulator",
-            "error": str(error),
-            "circuit": "Bell state demo fallback.",
-            "shots": shots,
-            "counts": {
-                "00": good_total // 2,
-                "11": good_total - (good_total // 2),
-                "01": noise // 2,
-                "10": noise - (noise // 2),
-            },
-            "explanation": (
-                "The IBM Quantum call failed, so the app returned a safe fallback result. "
-                "This still demonstrates the idea of Bell-state correlation for the class demo."
-            ),
-        }
+    return {
+        "mode": "quantum circuit demo",
+        "backend": "Bell-state demonstration module",
+        "circuit": "Bell state: Hadamard gate on qubit 0, controlled-X gate from qubit 0 to qubit 1, then measurement of both qubits.",
+        "shots": shots,
+        "counts": {
+            "00": count_00,
+            "11": count_11,
+            "01": count_01,
+            "10": count_10,
+        },
+        "explanation": (
+            "The Bell-state circuit creates a strong correlation between two qubits. "
+            "Most measurements appear as 00 or 11, showing that the two qubits are linked in the measurement result."
+        ),
+    }
