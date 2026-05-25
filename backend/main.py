@@ -1,4 +1,3 @@
-cat > backend/main.py <<'EOF'
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -20,8 +19,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Temporary in-memory knowledge store.
-# Good for tomorrow demo. It resets if Railway restarts/redeploys.
 KNOWLEDGE_STORE = []
 
 
@@ -209,4 +206,3 @@ def chat(request: ChatRequest):
         "answer": "\n\n".join(answer_parts),
         "sources": list(dict.fromkeys(chunk["filename"] for chunk in top_chunks))
     }
-EOF
